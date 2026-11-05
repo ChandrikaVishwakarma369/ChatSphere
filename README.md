@@ -34,6 +34,10 @@ A browser-based chat application for private, one-to-one conversations. Users ca
 
 The backend also uses bcrypt for password hashing and Multer to receive uploaded files. Mongoose and the files under `backend/src/model/` are remnants of an earlier implementation; the active database layer uses Prisma and PostgreSQL.
 
+## Frontend Styling & Typography
+
+The React.js, Vite, and Tailwind CSS frontend imports the **Poppins** and **Redaction 10** font families from the Google Fonts CDN in `frontend/index.html`. In `frontend/src/index.css`, the global `body` font-family is set to **Redaction 10**. Poppins is also loaded and available for use in specific elements when needed.
+
 ## Project Structure
 
 The tree below reflects the project files and omits installed dependencies (`node_modules`) and local environment files (`.env`).
