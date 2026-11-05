@@ -4,14 +4,19 @@ A browser-based chat application for private, one-to-one conversations. Users ca
 
 ## Features
 
-- User registration and login with bcrypt password hashing.
-- JWT authentication and authorization for protected chat APIs and Socket.IO connections.
-- Real-time text messaging with Socket.IO.
-- One-to-one conversations and persisted message history.
-- PostgreSQL database integration using Prisma ORM and migrations.
-- Redis cache for recent conversation messages (up to 50 messages for five minutes).
-- Cloudinary file upload integration for chat attachments.
-- REST API documentation using Swagger UI.
+- **User registration and login:** Register an account and log in with email and password. Passwords are hashed with bcrypt.
+- **JWT authentication:** JWTs protect chat REST endpoints and authenticate Socket.IO connections.
+- **Real-time one-to-one messaging:** Send messages to another registered user through Socket.IO. Messages and conversation history are persisted in PostgreSQL.
+- **SENT status:** A newly stored message is marked `SENT` and shown to its sender with one grey checkmark.
+- **DELIVERED status:** When the receiver's client receives a message, the status becomes `DELIVERED` and the sender sees two grey checkmarks.
+- **READ status:** When the receiver opens the conversation (or returns to its visible browser tab), eligible incoming messages become `READ`; the sender sees two blue checkmarks.
+- **Online/offline user status:** The chat page displays the selected user's current presence.
+- **Real-time presence updates:** Connected clients receive user status changes without refreshing the page.
+- **Multiple users and browser sessions:** Presence is tracked per user across simultaneous sockets, such as multiple tabs. A short disconnect grace period avoids a false offline transition during reconnection.
+- **File uploads:** Chat attachments are accepted through the upload endpoint, with Cloudinary used for file storage.
+- **PostgreSQL and Prisma:** Users, messages, file metadata, and message statuses use the Prisma data model and migrations.
+- **Redis message caching:** Recent conversation history is cached (up to 50 messages for five minutes).
+- **Swagger/OpenAPI documentation:** The REST API is described and available through Swagger UI.
 
 ## Technology Stack
 
@@ -19,13 +24,13 @@ A browser-based chat application for private, one-to-one conversations. Users ca
 | --- | --- |
 | Frontend | React.js, Vite, Tailwind CSS |
 | Backend | Node.js, Express.js |
+| Real-time communication | Socket.IO |
 | Database | PostgreSQL |
 | ORM | Prisma |
-| Real-time communication | Socket.IO |
 | Caching | Redis |
 | File storage | Cloudinary |
 | Authentication | JWT |
-| API documentation | Swagger UI |
+| API documentation | Swagger/OpenAPI, Swagger UI |
 
 The backend also uses bcrypt for password hashing and Multer to receive uploaded files. Mongoose and the files under `backend/src/model/` are remnants of an earlier implementation; the active database layer uses Prisma and PostgreSQL.
 
@@ -53,7 +58,9 @@ real-time-chat-application/
 │   │       │   └── migration.sql
 │   │       ├── 20261026122220_file_upload/
 │   │       │   └── migration.sql
-│   │       └── 20261028050602_cloudinary_file_publicid/
+│   │       ├── 20261028050602_cloudinary_file_publicid/
+│   │       │   └── migration.sql
+│   │       └── 20261104123120_add_message_status/
 │   │           └── migration.sql
 │   └── src/
 │       ├── app.js
@@ -85,6 +92,7 @@ real-time-chat-application/
 └── frontend/
     ├── .gitignore
     ├── README.md
+    ├── README.md
     ├── eslint.config.js
     ├── index.html
     ├── package.json
@@ -97,6 +105,7 @@ real-time-chat-application/
         ├── App.jsx
         ├── index.css
         ├── main.jsx
+        ├── socket.js
         ├── assets/
         │   ├── hero.png
         │   ├── react.svg
@@ -263,6 +272,26 @@ All routes use the `http://localhost:5000` server defined in the Swagger configu
 
 Text messages are sent over Socket.IO rather than a REST endpoint. The client authenticates its Socket.IO connection using the JWT and emits `send_message` with `receiverId` and `text`; the server broadcasts saved messages using `new_message`.
 
+### Message Status Workflow
+
+The chat page uses a reusable Socket.IO client authenticated with the JWT. Historical messages are loaded from `GET /api/chat/{userId}/messages` and merged by message ID with live events.
+
+1. **SENT:** The sender emits `send_message` with `{ receiverId, text }`. The server stores the message in PostgreSQL with status `SENT`, sends it to the sender and receiver using `new_message`, and acknowledges success. The sender sees one grey checkmark.
+2. **DELIVERED:** When the incoming message reaches the receiver's client, it emits `message_delivered` with `{ messageId }`. The server changes the status to `DELIVERED` and sends `message_status_updated` to the sender. The sender sees two grey checkmarks.
+3. **READ:** When the receiver opens the conversation or returns to its visible browser tab, eligible incoming message IDs are emitted as `message_read` with `{ messageIds: [...] }`. The server stores the `READ` status and notifies the sender with `message_status_updated`. The sender sees two blue checkmarks.
+
+The checkmarks are displayed on the sender's messages: **one grey** means sent and stored; **two grey** means delivered to the receiver's client; **two blue** means read by the receiver in the conversation.
+
+## Online/Offline Status Workflow
+
+Socket.IO authenticates each connection with the user's JWT and associates that socket with the authenticated user. The server keeps a set of active socket connections for each user.
+
+- A user becomes **ONLINE** when their first socket connects. The server broadcasts a `user_status_changed` event with `ONLINE` to other connected users and sends the connecting client the current `online_users` list.
+- A user becomes **OFFLINE** after their last active socket disconnects and remains disconnected through a one-second grace period. The server then broadcasts `user_status_changed` with `OFFLINE`.
+- If another tab remains connected, the user stays online. If a socket reconnects during the grace period, the pending offline transition is cancelled, preventing a brief false offline update.
+- The chat page listens for the current online-user list and real-time status changes, then displays **Online** or **Offline** for the selected user in the chat interface.
+- On a Socket.IO reconnection, the client can request the current online-user list again so its presence display can be refreshed.
+
 ## Database Management
 
 The Prisma schema is in `backend/prisma/schema.prisma`, and checked-in database migrations are in `backend/prisma/migrations/`. To inspect tables and records with Prisma Studio, run this from the `backend` directory:
@@ -288,4 +317,4 @@ The root `test` script is currently a placeholder that exits with an error; use 
 - Broadcast uploaded-file messages through Socket.IO and invalidate the affected Redis history cache.
 - Align Swagger response schemas and status codes with the actual route handlers.
 - Add automated backend and end-to-end tests, plus pagination for long conversation histories.
-- Add optional chat capabilities such as typing indicators, read receipts, and online presence.
+- Add optional chat capabilities such as typing indicators.

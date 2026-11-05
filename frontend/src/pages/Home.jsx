@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { disconnectChatSocket, getChatSocket } from "../socket";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const Home = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
+  const [onlineUserIds, setOnlineUserIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -86,7 +88,75 @@ const Home = () => {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+
+    if (!token) {
+      navigate("/login");
+      return undefined;
+    }
+
+    const socket = getChatSocket(token);
+
+    function onOnlineUsers(userIds) {
+      setOnlineUserIds(
+        new Set(
+          (Array.isArray(userIds) ? userIds : []).map((userId) =>
+            String(userId),
+          ),
+        ),
+      );
+    }
+
+    function onUserStatusChanged(update) {
+      if (!update?.userId || !["ONLINE", "OFFLINE"].includes(update.status)) {
+        return;
+      }
+
+      setOnlineUserIds((previous) => {
+        const next = new Set(previous);
+        const userId = String(update.userId);
+
+        if (update.status === "ONLINE") {
+          next.add(userId);
+        } else {
+          next.delete(userId);
+        }
+
+        return next;
+      });
+    }
+
+    function onConnectError(error) {
+      if (
+        /authentication required|invalid (or expired )?token|user not found/i.test(
+          error.message || "",
+        )
+      ) {
+        disconnectChatSocket(socket);
+        localStorage.removeItem("token");
+        navigate("/login");
+      }
+    }
+
+    socket.on("online_users", onOnlineUsers);
+    socket.on("user_status_changed", onUserStatusChanged);
+    socket.on("connect_error", onConnectError);
+    socket.connect();
+
+    if (socket.connected) {
+      socket.emit("get_online_users");
+    }
+
+    return () => {
+      socket.off("online_users", onOnlineUsers);
+      socket.off("user_status_changed", onUserStatusChanged);
+      socket.off("connect_error", onConnectError);
+    };
+  }, [navigate]);
+
   const handleLogout = () => {
+    disconnectChatSocket();
     localStorage.removeItem("token");
     navigate("/login");
   };
@@ -342,6 +412,23 @@ const Home = () => {
 
                       <p className="mt-1 truncate text-sm text-gray-500">
                         {user.Email}
+                      </p>
+                      <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+                        <span
+                          aria-label={
+                            onlineUserIds.has(String(user._id))
+                              ? "Online"
+                              : "Offline"
+                          }
+                          className={`h-2 w-2 rounded-full ${
+                            onlineUserIds.has(String(user._id))
+                              ? "bg-emerald-500"
+                              : "bg-gray-300"
+                          }`}
+                        />
+                        {onlineUserIds.has(String(user._id))
+                          ? "Online"
+                          : "Offline"}
                       </p>
                     </div>
                   </div>
