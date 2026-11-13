@@ -14,6 +14,7 @@ const io = new Server(server, {
   },
 });
 
+app.set("io", io);
 chatSocket(io);
 
 const startServer = async () => {

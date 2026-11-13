@@ -1,17 +1,21 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { Bell } from "lucide-react";
 import { disconnectChatSocket, getChatSocket } from "../socket";
-
+import { useCall } from "../context/CallContext";
+import { Link } from "react-router-dom";
+import { useNotificationCount } from "../context/useNotificationCount";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 const Home = () => {
+  const { connectCallSocket } = useCall();
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [onlineUserIds, setOnlineUserIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
+  const { unreadCount } = useNotificationCount();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -87,7 +91,9 @@ const Home = () => {
       isMounted = false;
     };
   }, [navigate]);
-
+  useEffect(() => {
+    connectCallSocket();
+  }, [connectCallSocket]);
   useEffect(() => {
     const token = localStorage.getItem("token");
 
@@ -154,7 +160,6 @@ const Home = () => {
       socket.off("connect_error", onConnectError);
     };
   }, [navigate]);
-
   const handleLogout = () => {
     disconnectChatSocket();
     localStorage.removeItem("token");
@@ -167,11 +172,9 @@ const Home = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-lime-50 via-white to-emerald-50">
-
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-lime-100 bg-white/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 sm:px-8">
-
           {/* Logo and App Name */}
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-lime-600 text-white shadow-md shadow-lime-200">
@@ -202,6 +205,18 @@ const Home = () => {
 
           {/* User and Logout */}
           <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+            <Link
+              to="/notifications"
+              className="relative rounded-full p-2 text-gray-700 hover:bg-gray-100"
+            >
+              <Bell size={24} />
+
+              {unreadCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-xs text-white">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
+            </Link>
             <div className="hidden items-center gap-2 sm:flex">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-lime-100 font-bold text-lime-800">
                 {(currentUser?.Fullname || "U").charAt(0).toUpperCase()}
@@ -245,7 +260,6 @@ const Home = () => {
 
       {/* Main Content */}
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-8 sm:py-12">
-
         {/* Welcome Section */}
         <section className="mb-8 overflow-hidden rounded-3xl bg-gradient-to-r from-lime-600 to-emerald-600 p-6 text-white shadow-lg shadow-lime-200/60 sm:p-9">
           <div className="flex items-center justify-between gap-4">
@@ -284,7 +298,6 @@ const Home = () => {
 
         {/* Users Section */}
         <section className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm sm:p-8">
-
           {/* Section Heading */}
           <div className="mb-6 flex items-center justify-between gap-3">
             <div>
@@ -313,9 +326,7 @@ const Home = () => {
                 Finding your people...
               </p>
 
-              <p className="mt-1 text-xs text-gray-400">
-                Please wait a moment
-              </p>
+              <p className="mt-1 text-xs text-gray-400">Please wait a moment</p>
             </div>
           )}
 
@@ -344,9 +355,7 @@ const Home = () => {
                 Unable to load users
               </h3>
 
-              <p className="mt-2 text-sm text-red-600">
-                {error}
-              </p>
+              <p className="mt-2 text-sm text-red-600">{error}</p>
 
               <button
                 onClick={() => window.location.reload()}
@@ -384,8 +393,8 @@ const Home = () => {
               </h3>
 
               <p className="mt-2 max-w-sm text-sm leading-6 text-gray-500">
-                There are no other registered users to chat with right now.
-                Ask someone to create an account and join you!
+                There are no other registered users to chat with right now. Ask
+                someone to create an account and join you!
               </p>
             </div>
           )}

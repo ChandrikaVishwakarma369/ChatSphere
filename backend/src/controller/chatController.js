@@ -1,6 +1,7 @@
 const { prisma } = require("../config/db.js");
 const uploadCloudinaryFile = require("../utils/uploadCloudinaryFile.js");
 const { getConversationMessages } = require("../service/messageCache.js");
+const { createNotification } = require("../service/notifications.js");
 const getChatUsers = async (req, res) => {
   try {
     const currentUserId = Number(req.user.id);
@@ -168,6 +169,13 @@ const uploadFile = async (req, res) => {
     });
     const io = req.app.get("io");
     if (io) {
+      await createNotification(io, {
+        userId: otherUserId,
+        senderId: currentUserId,
+        messageId: message.id,
+        type: "MESSAGE",
+      });
+
       io.to(`user:${currentUserId}`)
         .to(`user:${otherUserId}`)
         .emit("new_message", message);

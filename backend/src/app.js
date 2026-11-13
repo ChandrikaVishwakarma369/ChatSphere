@@ -6,7 +6,7 @@ const chatRoutes = require("./route/chatRoutes.js");
 const path = require("path");
 const swaggerUi = require("swagger-ui-express")
 const swaggerSpec = require("./config/swagger.js");
-
+const notificationRoutes = require("./route/notificationRoutes.js");
 const cors = require("cors");
 app.use(cors());
 app.use(express.json());
@@ -22,5 +22,6 @@ app.use(
 app.use("/api/auth", authRoute);
 app.use("/api/users", userRoute);
 app.use("/api/chat", chatRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 module.exports = app;

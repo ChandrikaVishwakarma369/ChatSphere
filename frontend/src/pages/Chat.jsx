@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Plus, X, FileText } from "lucide-react";
+import { Plus, X, FileText, Phone, Video, ArrowLeft } from "lucide-react";
 import { disconnectChatSocket, getChatSocket } from "../socket";
+import { useCall } from "../context/CallContext";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -107,12 +108,14 @@ function formatFileSize(bytes = 0) {
 }
 
 export default function Chat() {
+  const { connectCallSocket, startCall, call } = useCall();
   const { userId } = useParams();
   const navigate = useNavigate();
 
   const [me, setMe] = useState(null);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [calls, setCalls] = useState([]);
   const [text, setText] = useState("");
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreview, setFilePreview] = useState("");
@@ -140,6 +143,10 @@ export default function Chat() {
   useEffect(() => {
     selectedRef.current = userId;
   }, [userId]);
+
+  useEffect(() => {
+    connectCallSocket();
+  }, [connectCallSocket]);
 
   const clearAttachment = useCallback(() => {
     if (filePreviewUrlRef.current) {
@@ -179,6 +186,7 @@ export default function Chat() {
       setError("");
       setSelected(null);
       setMessages([]);
+      setCalls([]);
       clearAttachment();
       setText("");
 
@@ -191,15 +199,22 @@ export default function Chat() {
           Authorization: `Bearer ${token}`,
         };
 
-        const [usersResponse, messagesResponse] = await Promise.all([
-          fetch(`${API}/api/chat/users`, { headers }),
-          fetch(`${API}/api/chat/${userId}/messages`, { headers }),
-        ]);
+        const [usersResponse, messagesResponse, callsResponse] =
+          await Promise.all([
+            fetch(`${API}/api/chat/users`, { headers }),
+            fetch(`${API}/api/chat/${userId}/messages`, { headers }),
+            fetch(`${API}/api/chat/${userId}/calls`, { headers }),
+          ]);
 
         const usersData = await usersResponse.json();
         const messagesData = await messagesResponse.json();
+        const callsData = await callsResponse.json();
 
-        if (usersResponse.status === 401 || messagesResponse.status === 401) {
+        if (
+          [usersResponse, messagesResponse, callsResponse].some(
+            (response) => response.status === 401,
+          )
+        ) {
           localStorage.removeItem("token");
           navigate("/login");
           return;
@@ -211,6 +226,10 @@ export default function Chat() {
 
         if (!messagesResponse.ok) {
           throw new Error(messagesData.message || "Unable to load messages");
+        }
+
+        if (!callsResponse.ok) {
+          throw new Error(callsData.message || "Unable to load call history");
         }
 
         const currentUser = usersData.me;
@@ -239,6 +258,8 @@ export default function Chat() {
         setMessages((previous) =>
           mergeMessages(previous, loadedMessages, statusUpdatesRef.current),
         );
+
+        setCalls(Array.isArray(callsData.calls) ? callsData.calls : []);
       } catch (err) {
         if (active) {
           setError(err.message || "Chat could not be loaded.");
@@ -261,6 +282,29 @@ export default function Chat() {
     );
   }, []);
 
+  const addOrUpdateCall = useCallback((incomingCall) => {
+    if (!incomingCall?.callId) return;
+
+    setCalls((previous) => {
+      const index = previous.findIndex(
+        (item) => item.callId === incomingCall.callId,
+      );
+
+      if (index === -1) {
+        return [...previous, incomingCall].sort(
+          (a, b) => new Date(a.startedAt || 0) - new Date(b.startedAt || 0),
+        );
+      }
+
+      const next = [...previous];
+      next[index] = { ...next[index], ...incomingCall };
+
+      return next.sort(
+        (a, b) => new Date(a.startedAt || 0) - new Date(b.startedAt || 0),
+      );
+    });
+  }, []);
+
   // Mark an incoming message as DELIVERED.
   const markMessageDelivered = useCallback((message) => {
     const myId = meRef.current;
@@ -278,19 +322,22 @@ export default function Chat() {
 
     pendingDeliveryIdsRef.current.add(messageId);
 
-    console.log("Sending message_delivered event:", messageId);
+    if (!myId) {
+      console.log("Delivery skipped: myId is missing");
+      return;
+    }
+
+    if (!socket?.connected) {
+      console.log("Delivery skipped: socket is disconnected");
+      return;
+    }
 
     socket.emit("message_delivered", { messageId }, (result) => {
-      pendingDeliveryIdsRef.current.delete(messageId);
-
-      console.log("Delivery acknowledgement:", result);
-
       if (!result?.success) {
         console.error("Delivery failed:", result?.message);
         return;
       }
-
-      console.log("Message marked DELIVERED:", messageId);
+      pendingDeliveryIdsRef.current.delete(messageId);
 
       const deliveredAt = new Date().toISOString();
 
@@ -415,7 +462,6 @@ export default function Chat() {
     if (!meRef.current) return;
 
     const pendingMessages = pendingSocketMessagesRef.current;
-
     pendingSocketMessagesRef.current = [];
 
     pendingMessages.forEach(processIncomingMessage);
@@ -436,7 +482,6 @@ export default function Chat() {
     let active = true;
 
     function onConnect() {
-      console.log("Chat socket connected:", socket.id);
       setStatus("Connected");
     }
 
@@ -489,7 +534,6 @@ export default function Chat() {
     }
 
     function onNewMessage(message) {
-      console.log("New message received:", message);
       processIncomingMessage(message);
     }
 
@@ -545,6 +589,23 @@ export default function Chat() {
       );
     }
 
+    function onCallHistoryUpdated(callRecord) {
+      const currentId = meRef.current;
+      const peerId = selectedRef.current;
+
+      if (!callRecord || !currentId || !peerId) return;
+
+      const isThisConversation =
+        (String(callRecord.callerId) === String(currentId) &&
+          String(callRecord.receiverId) === String(peerId)) ||
+        (String(callRecord.receiverId) === String(currentId) &&
+          String(callRecord.callerId) === String(peerId));
+
+      if (isThisConversation) {
+        addOrUpdateCall(callRecord);
+      }
+    }
+
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("connect_error", onConnectError);
@@ -552,6 +613,7 @@ export default function Chat() {
     socket.on("user_status_changed", onUserStatusChanged);
     socket.on("new_message", onNewMessage);
     socket.on("message_status_updated", onMessageStatusUpdated);
+    socket.on("call_history_updated", onCallHistoryUpdated);
 
     socket.connect();
 
@@ -561,11 +623,13 @@ export default function Chat() {
           setStatus("Connected");
         }
       });
+
       socket.emit("get_online_users");
     }
 
     return () => {
       active = false;
+
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);
@@ -573,10 +637,11 @@ export default function Chat() {
       socket.off("user_status_changed", onUserStatusChanged);
       socket.off("new_message", onNewMessage);
       socket.off("message_status_updated", onMessageStatusUpdated);
+      socket.off("call_history_updated", onCallHistoryUpdated);
 
       socketRef.current = null;
     };
-  }, [navigate, processIncomingMessage]);
+  }, [navigate, processIncomingMessage, addOrUpdateCall]);
 
   // Handle browser tab visibility.
   useEffect(() => {
@@ -596,16 +661,12 @@ export default function Chat() {
       return;
     }
 
-    console.log("Checking historical SENT messages...");
-
     messages.forEach((message) => {
       const isIncoming =
         String(getReceiverId(message)) === String(meRef.current) &&
         String(getSenderId(message)) !== String(meRef.current);
 
       if (isIncoming && message.status === "SENT") {
-        console.log("Historical SENT message found:", getMessageId(message));
-
         markMessageDelivered(message);
       }
     });
@@ -623,7 +684,7 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({
       behavior: "smooth",
     });
-  }, [messages]);
+  }, [messages, calls]);
 
   // Select an attachment locally; do not upload it yet.
   function handleFileChange(event) {
@@ -646,7 +707,6 @@ export default function Chat() {
 
     if (file.type.startsWith("image/")) {
       filePreviewUrlRef.current = URL.createObjectURL(file);
-
       setFilePreview(filePreviewUrlRef.current);
     } else {
       setFilePreview("");
@@ -693,7 +753,6 @@ export default function Chat() {
         const savedMessage = result.message;
 
         addOrUpdateMessages([savedMessage]);
-
         setText("");
       },
     );
@@ -783,37 +842,80 @@ export default function Chat() {
     !sending &&
     (Boolean(selectedFile) || status === "Connected");
 
+  const timeline = [
+    ...messages.map((item) => ({
+      ...item,
+      timelineType: "message",
+    })),
+    ...calls.map((item) => ({
+      ...item,
+      timelineType: "call",
+    })),
+  ].sort((a, b) => {
+    const first = new Date(
+      a.timelineType === "call" ? a.startedAt : a.createdAt || 0,
+    ).getTime();
+
+    const second = new Date(
+      b.timelineType === "call" ? b.startedAt : b.createdAt || 0,
+    ).getTime();
+
+    return first - second;
+  });
+
+  function formatCallDuration(totalSeconds = 0) {
+    const seconds = Math.max(0, Number(totalSeconds) || 0);
+
+    const minutesPart = Math.floor(seconds / 60);
+    const secondsPart = seconds % 60;
+
+    return minutesPart > 0
+      ? `${minutesPart}m ${String(secondsPart).padStart(2, "0")}s`
+      : `${secondsPart}s`;
+  }
+
+  function getCallStatusLabel(callRecord, outgoing) {
+    switch (callRecord.status) {
+      case "COMPLETED":
+        return "Completed";
+      case "MISSED":
+        return outgoing ? "No answer" : "Missed";
+      case "REJECTED":
+        return outgoing ? "Declined" : "Rejected";
+      case "CANCELLED":
+        return "Cancelled";
+      case "FAILED":
+        return "Failed";
+      case "RINGING":
+        return "Ringing";
+      case "ACCEPTED":
+        return "In progress";
+      default:
+        return callRecord.status || "Call";
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-lime-50 via-white to-emerald-50 p-0 sm:p-5 lg:p-8">
       <div className="mx-auto flex h-[100dvh] max-w-5xl flex-col overflow-hidden bg-white shadow-xl shadow-lime-900/5 sm:h-[calc(100dvh-2.5rem)] sm:rounded-3xl sm:border sm:border-lime-100 lg:h-[calc(100dvh-4rem)]">
         {/* Chat Header */}
         <header className="flex shrink-0 items-center gap-3 border-b border-lime-100 bg-white px-4 py-3 sm:px-6 sm:py-4">
+          {/* Back Button */}
           <button
             type="button"
             onClick={() => navigate("/")}
             aria-label="Back to users"
-            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-600 transition hover:border-lime-200 hover:bg-lime-50 hover:text-lime-700"
+            className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-gray-200 text-gray-600 transition hover:bg-lime-50 hover:text-lime-700"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="21"
-              height="21"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="m15 18-6-6 6-6" />
-              <path d="M20 12H9" />
-            </svg>
+            <ArrowLeft size={20} />
           </button>
 
+          {/* Selected User Avatar */}
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-lime-200 to-emerald-200 text-lg font-extrabold text-lime-800">
             {(selected?.Fullname || "U").charAt(0).toUpperCase()}
           </div>
 
+          {/* Selected User Details */}
           <div className="min-w-0 flex-1">
             <h1 className="truncate font-bold text-gray-800 sm:text-lg">
               {selected?.Fullname || "Loading chat..."}
@@ -834,13 +936,7 @@ export default function Chat() {
                 }`}
               />
 
-              <span
-                className={`text-xs font-medium ${
-                  selected && onlineUserIds.has(String(getId(selected)))
-                    ? "text-emerald-600"
-                    : "text-gray-500"
-                }`}
-              >
+              <span className="text-xs font-medium text-gray-500">
                 {!selected
                   ? "Loading status..."
                   : onlineUserIds.has(String(getId(selected)))
@@ -848,6 +944,43 @@ export default function Chat() {
                     : "Offline"}
               </span>
             </div>
+          </div>
+
+          {/* Audio and Video Call Buttons */}
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                startCall(getId(selected), false, selected?.Fullname)
+              }
+              disabled={
+                !selected ||
+                !onlineUserIds.has(String(getId(selected))) ||
+                Boolean(call)
+              }
+              title="Audio call"
+              aria-label="Start audio call"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime-100 text-lime-700 transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Phone size={19} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                startCall(getId(selected), true, selected?.Fullname)
+              }
+              disabled={
+                !selected ||
+                !onlineUserIds.has(String(getId(selected))) ||
+                Boolean(call)
+              }
+              title="Video call"
+              aria-label="Start video call"
+              className="flex h-10 w-10 items-center justify-center rounded-xl bg-lime-100 text-lime-700 transition hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Video size={19} />
+            </button>
           </div>
 
           {/* Current User */}
@@ -881,9 +1014,11 @@ export default function Chat() {
           {loading && (
             <div className="flex h-full min-h-48 flex-col items-center justify-center">
               <div className="h-10 w-10 animate-spin rounded-full border-4 border-lime-100 border-t-lime-600" />
+
               <p className="mt-4 text-sm font-medium text-gray-600">
                 Loading conversation...
               </p>
+
               <p className="mt-1 text-xs text-gray-400">
                 Getting your messages ready
               </p>
@@ -895,7 +1030,9 @@ export default function Chat() {
               <p className="text-sm font-semibold text-red-700">
                 Something went wrong
               </p>
+
               <p className="mt-1 break-words text-sm text-gray-600">{error}</p>
+
               <button
                 type="button"
                 onClick={() => setError("")}
@@ -906,39 +1043,106 @@ export default function Chat() {
             </div>
           )}
 
-          {!loading && !error && messages.length === 0 && (
-            <div className="flex min-h-64 flex-col items-center justify-center py-10 text-center">
-              <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-lime-100 to-emerald-100 text-lime-700">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="38"
-                  height="38"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-                </svg>
-              </div>
+          {!loading &&
+            !error &&
+            messages.length === 0 &&
+            calls.length === 0 && (
+              <div className="flex min-h-64 flex-col items-center justify-center py-10 text-center">
+                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-lime-100 to-emerald-100 text-lime-700">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="38"
+                    height="38"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                  </svg>
+                </div>
 
-              <h2 className="mt-5 text-lg font-bold text-gray-800">
-                Start a conversation
-              </h2>
-              <p className="mt-2 max-w-xs text-sm leading-6 text-gray-500">
-                Say hello to {selected?.Fullname || "your friend"}. Your
-                messages will appear here.
-              </p>
-              <span className="mt-4 rounded-full bg-lime-100 px-4 py-2 text-xs font-semibold text-lime-800">
-                Your chat starts here 💚
-              </span>
-            </div>
-          )}
+                <h2 className="mt-5 text-lg font-bold text-gray-800">
+                  Start a conversation
+                </h2>
+
+                <p className="mt-2 max-w-xs text-sm leading-6 text-gray-500">
+                  Say hello to {selected?.Fullname || "your friend"}. Your
+                  messages will appear here.
+                </p>
+
+                <span className="mt-4 rounded-full bg-lime-100 px-4 py-2 text-xs font-semibold text-lime-800">
+                  Your chat starts here 💚
+                </span>
+              </div>
+            )}
 
           {!loading &&
-            messages.map((message) => {
+            timeline.map((item) => {
+              if (item.timelineType === "call") {
+                const outgoing = String(item.callerId) === String(getId(me));
+
+                const CallIcon = item.video ? Video : Phone;
+                const statusLabel = getCallStatusLabel(item, outgoing);
+
+                const callTime = item.startedAt
+                  ? new Date(item.startedAt).toLocaleString([], {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })
+                  : "";
+
+                return (
+                  <div
+                    key={`call-${item.callId}`}
+                    className="flex justify-center"
+                  >
+                    <div className="flex w-full max-w-sm items-center gap-3 rounded-2xl border border-lime-100 bg-white px-4 py-3 shadow-sm">
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          item.status === "MISSED" || item.status === "FAILED"
+                            ? "bg-red-50 text-red-600"
+                            : "bg-lime-50 text-lime-700"
+                        }`}
+                      >
+                        <CallIcon size={19} />
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-800">
+                          {outgoing ? "Outgoing" : "Incoming"}{" "}
+                          {item.video ? "video call" : "audio call"}
+                        </p>
+
+                        <p
+                          className={`mt-0.5 text-xs ${
+                            item.status === "MISSED" || item.status === "FAILED"
+                              ? "text-red-600"
+                              : "text-gray-500"
+                          }`}
+                        >
+                          {statusLabel}
+                          {item.status === "COMPLETED"
+                            ? ` · ${formatCallDuration(item.duration)}`
+                            : ""}
+                        </p>
+
+                        <p className="mt-1 text-[10px] text-gray-400">
+                          {callTime}
+                        </p>
+                      </div>
+
+                      <span className="text-xs text-gray-400">
+                        {outgoing ? "↗" : "↙"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              }
+
+              const message = item;
               const mine = String(getSenderId(message)) === String(getId(me));
 
               const messageId = getMessageId(message);
@@ -946,7 +1150,7 @@ export default function Chat() {
 
               return (
                 <div
-                  key={messageId}
+                  key={`message-${messageId}`}
                   className={`flex items-end gap-2 ${
                     mine ? "justify-end" : "justify-start"
                   }`}
@@ -993,10 +1197,12 @@ export default function Chat() {
                             }`}
                           >
                             <FileText size={25} className="shrink-0" />
+
                             <div className="min-w-0">
                               <p className="break-all text-sm font-semibold">
                                 {message.fileName || "Attachment"}
                               </p>
+
                               <p className="mt-1 text-xs opacity-75">
                                 {formatFileSize(message.fileSize)}
                               </p>
@@ -1085,9 +1291,11 @@ export default function Chat() {
                   <p className="truncate text-sm font-semibold text-gray-800">
                     {selectedFile.name}
                   </p>
+
                   <p className="mt-1 text-xs text-gray-500">
                     {formatFileSize(selectedFile.size)} · Ready to send
                   </p>
+
                   <p className="mt-1 text-xs text-lime-700">
                     File has not been uploaded yet
                   </p>

@@ -1,10 +1,14 @@
 const express = require("express");
+const { prisma } = require("../config/db.js");
+
 const router = express.Router();
+
 const {
   getChatUsers,
   getMessages,
   uploadFile,
 } = require("../controller/chatController.js");
+
 const authMiddleware = require("../middleware/authMiddleware.js");
 const upload = require("../middleware/uploadMiddleware.js");
 
@@ -13,63 +17,22 @@ const upload = require("../middleware/uploadMiddleware.js");
  * /api/chat/users:
  *   get:
  *     summary: Get all registered chat users
- *     description: Retrieves the logged-in user's details and the list of other registered users.
- *     tags:
- *       - Chat
+ *     tags: [Chat]
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       '200':
- *         description: Users retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 me:
- *                   type: object
- *                   description: Logged-in user details
- *                   properties:
- *                     _id:
- *                       type: integer
- *                       example: 1
- *                     Fullname:
- *                       type: string
- *                       example: john doe
- *                     Email:
- *                       type: string
- *                       example: john@example.com
- *                 users:
- *                   type: array
- *                   description: List of other registered users
- *                   items:
- *                     type: object
- *                     properties:
- *                       _id:
- *                         type: integer
- *                         example: 2
- *                       Fullname:
- *                         type: string
- *                         example: Rahul Sharma
- *                       Email:
- *                         type: string
- *                         example: rahul@example.com
- *       '404':
- *         description: User not found!
- *       '500':
- *         description: Internal server error
+ *       200:
+ *         description: Logged-in user and other registered users
+ *       401:
+ *         description: Unauthorized
  */
-router.get(
-  "/users", 
-  authMiddleware, 
-  getChatUsers
-);
+router.get("/users", authMiddleware, getChatUsers);
 
 /**
  * @swagger
  * /api/chat/{userId}/messages:
  *   get:
- *     summary: Get messages between logged-in user and another user
+ *     summary: Get messages between the logged-in user and another user
  *     tags: [Chat]
  *     security:
  *       - bearerAuth: []
@@ -79,95 +42,52 @@ router.get(
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the other user
  *     responses:
  *       200:
  *         description: Messages fetched successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 messages:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       _id:
- *                         type: integer
- *                       senderId:
- *                         type: integer
- *                       receiverId:
- *                         type: integer
- *                       text:
- *                         type: string
- *                       createdAt:
- *                         type: string
- *                         format: date-time
+ *       400:
+ *         description: Invalid user ID or self-chat is not allowed
  *       401:
- *         description: Invalid user Id
- *       500:
- *         description: Internal server error
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
  */
-router.get(
-  "/:userId/messages", 
-  authMiddleware, 
-  getMessages
-);
+router.get("/:userId/messages", authMiddleware, getMessages);
 
 /**
  * @swagger
  * /api/chat/{userId}/upload:
  *   post:
  *     summary: Upload a file to a chat
- *     description: Upload a file for a specific user. The file is uploaded using the authenticated user's JWT token.
  *     tags: [Chat]
- *
  *     security:
  *       - bearerAuth: []
- *
  *     parameters:
  *       - in: path
  *         name: userId
  *         required: true
  *         schema:
  *           type: integer
- *         description: ID of the receiver user
- *
  *     requestBody:
  *       required: true
  *       content:
  *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required: [file]
  *             properties:
  *               file:
  *                 type: string
  *                 format: binary
- *                 description: File to upload
- *             required:
- *               - file
- *
+ *               text:
+ *                 type: string
  *     responses:
- *       200:
- *         description: File uploaded successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 message:
- *                   type: string
- *                   example: File uploaded successfully
- *                 fileUrl:
- *                   type: string
- *                   example: https://res.cloudinary.com/demo/image/upload/sample.jpg
- *
+ *       201:
+ *         description: File uploaded and message saved
  *       400:
- *         description: Invalid user Id
- *
- *       500:
- *         description: Internal server error
+ *         description: Invalid user ID or missing file
+ *       401:
+ *         description: Unauthorized
  */
 router.post(
   "/:userId/upload",
@@ -175,5 +95,117 @@ router.post(
   upload.single("file"),
   uploadFile,
 );
+
+/**
+ * @swagger
+ * /api/chat/{userId}/calls:
+ *   get:
+ *     summary: Get audio and video call history with another user
+ *     description: Returns incoming and outgoing calls in chronological order. Call records are stored permanently in the database.
+ *     tags: [Chat]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: The other participant's user ID
+ *     responses:
+ *       200:
+ *         description: Call history retrieved successfully
+ *       400:
+ *         description: Invalid ID or self-call history is not allowed
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: User not found
+ *       500:
+ *         description: Unable to fetch call history
+ */
+router.get("/:userId/calls", authMiddleware, async (req, res) => {
+  try {
+    const currentUserId = Number(req.user?.id);
+    const peerId = Number(req.params.userId);
+
+    if (!Number.isSafeInteger(currentUserId) || currentUserId <= 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid authenticated user",
+      });
+    }
+
+    if (!Number.isSafeInteger(peerId) || peerId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID",
+      });
+    }
+
+    if (currentUserId === peerId) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot fetch call history with yourself",
+      });
+    }
+
+    const peer = await prisma.user.findUnique({
+      where: { id: peerId },
+      select: { id: true },
+    });
+
+    if (!peer) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const calls = await prisma.call.findMany({
+      where: {
+        OR: [
+          {
+            callerId: currentUserId,
+            receiverId: peerId,
+          },
+          {
+            callerId: peerId,
+            receiverId: currentUserId,
+          },
+        ],
+      },
+      orderBy: {
+        startedAt: "asc",
+      },
+      include: {
+        caller: {
+          select: {
+            id: true,
+            Fullname: true,
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            Fullname: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      calls,
+    });
+  } catch (error) {
+    console.error("Call history error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to fetch call history",
+    });
+  }
+});
 
 module.exports = router;

@@ -1,9 +1,21 @@
+
 import { io } from "socket.io-client";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 let socket;
 let socketToken;
+
+export function getChatTabId() {
+  let tabId = sessionStorage.getItem("chatTabId");
+
+  if (!tabId) {
+    tabId = crypto.randomUUID();
+    sessionStorage.setItem("chatTabId", tabId);
+  }
+
+  return tabId; 
+}
 
 export function getChatSocket(token) {
   if (socket && socketToken !== token) {
@@ -12,9 +24,15 @@ export function getChatSocket(token) {
 
   if (!socket) {
     socketToken = token;
+
+    const tabId = getChatTabId();
+
     socket = io(API, {
       autoConnect: false,
-      auth: { token },
+      auth: {
+        token,
+        tabId,
+      },
       reconnection: true,
     });
   }

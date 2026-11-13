@@ -1,6 +1,10 @@
+
 const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
+
+//for debugging purpose
+// console.log("Prisma Notification Model:", !!prisma.notification);
 
 const dbConnect = async () => {
   try {
