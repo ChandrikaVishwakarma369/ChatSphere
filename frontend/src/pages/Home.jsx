@@ -6,7 +6,7 @@ import { disconnectChatSocket, getChatSocket } from "../socket";
 import { useCall } from "../context/CallContext";
 import { Link } from "react-router-dom";
 import { useNotificationCount } from "../context/useNotificationCount";
-const API_URL = import.meta.env.VITE_API_URL || `${import.meta.env.VITE_API_URL || "http://localhost:5000"}`";
+const API_URL = import.meta.env.VITE_API_URL || `${import.meta.env.VITE_API_URL || "http://localhost:5000"}`;
 
 const Home = () => {
   const { connectCallSocket } = useCall();

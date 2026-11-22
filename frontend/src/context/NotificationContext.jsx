@@ -9,7 +9,7 @@ import { useLocation } from "react-router-dom";
 import { getChatSocket } from "../socket";
 import { NotificationCountContext } from "./notificationCount";
 
-const API_URL = import.meta.env.VITE_API_URL || `${import.meta.env.VITE_API_URL || "http://localhost:5000"}`";
+const API_URL = import.meta.env.VITE_API_URL || `${import.meta.env.VITE_API_URL || "http://localhost:5000"}`;
 
 export function NotificationProvider({ children }) {
   const location = useLocation();
