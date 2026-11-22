@@ -4,7 +4,7 @@ import { Plus, X, FileText, Phone, Video, ArrowLeft } from "lucide-react";
 import { disconnectChatSocket, getChatSocket } from "../socket";
 import { useCall } from "../context/CallContext";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API = import.meta.env.VITE_API_URL || `${import.meta.env.VITE_API_URL || "http://localhost:5000"}`";
 
 function getId(user) {
   if (!user) return null;

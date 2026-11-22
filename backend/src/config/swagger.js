@@ -9,7 +9,7 @@ const options = {
     },
     servers: [
       {
-        url: "http://localhost:5000",
+        url: `${import.meta.env.VITE_API_URL || "http://localhost:5000"}"`,
         description: "Test the API",
       },
     ],
