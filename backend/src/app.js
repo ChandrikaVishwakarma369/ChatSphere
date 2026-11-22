@@ -8,7 +8,13 @@ const swaggerUi = require("swagger-ui-express")
 const swaggerSpec = require("./config/swagger.js");
 const notificationRoutes = require("./route/notificationRoutes.js");
 const cors = require("cors");
-app.use(cors());
+
+const corsOptions = {
+  origin: "http://localhost:5173", // Allow your frontend origin
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], // Explicitly allow PATCH
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(
   "/uploads",
