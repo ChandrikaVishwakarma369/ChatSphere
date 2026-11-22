@@ -10,8 +10,10 @@ const notificationRoutes = require("./route/notificationRoutes.js");
 const cors = require("cors");
 
 const corsOptions = {
-  origin: "http://localhost:5173", // Allow your frontend origin
-  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], // Explicitly allow PATCH
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"],
+  credentials: true,
 };
 
 app.use(cors(corsOptions));
